@@ -41,7 +41,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--answer_typ",
         type=str,
-        default="abcd",
+        default="explain",
         help="data directory",
     )
 
@@ -127,8 +127,9 @@ def process_videos_and_audio(zip_path, video_path, num_frames=32, sampling_rate=
 # create conversation for unimodal and multimodal prompts
 def create_conversation(video, audio, question):
     # load all modalities
-    prompt = "Select the best answer to the following multiple-choice question based on the video. "
-    prompt2 = "Answer with the option\'s letter or number from the given choices directly and only give the best option. The best answer is: "
+    prompt = "You are given a video, its associated audio, and a question. \n Carefully analyze the relevant visual and auditory information needed to answer the question."
+    prompt2 = "Output: \n Final Answer: Provide a concise and accurate answer to the question. \n Explanation: Give a short, high-level explanation of the key observations or principles from the video and/or audio that support your answer."
+    
     # load all modalities
     conversation = [
         {
@@ -142,7 +143,7 @@ def create_conversation(video, audio, question):
             "content": [
                 {"type": "video", "video": video},
                 {"type": "audio", "audio": audio},
-                {"type": "text", "text": prompt + question[0] +  "\n" + prompt2},
+                {"type": "text", "text": prompt + "\n" + prompt2 + "\n" + question[0]},
             ],
         }
     ]
@@ -169,15 +170,7 @@ def inference(video, audio, question):
         text = processor.batch_decode(text_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
     torch.cuda.empty_cache()
 
-    if args.answer_typ == "9qj4":
-        found = []
-        for item in text:
-            for char in ['9', 'J', 'Q', '4']:
-                if char in item:
-                    found.append(char)
-        text = list(set(found))
-
-    return text[0] if len(text) > 0 else "N"
+    return text[0]
 
 if __name__ == "__main__":
     args = parse_args()

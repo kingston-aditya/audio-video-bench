@@ -9,7 +9,7 @@ import tempfile
 import os
 import sys
 sys.path.insert(1, "/nfshomes/asarkar6/aditya/audio-video-bench/")
-from data_curate.load_complement import video_questions_dataloader
+from data_curate.make_coml.load_complement import video_questions_dataloader
 
 import json
 import argparse
@@ -56,9 +56,9 @@ def parse_args(input_args=None):
     )
 
     parser.add_argument(
-        "--typ",
+        "--answer_typ",
         type=str,
-        default="gen",
+        default="abcd",
         help="Number of frames to be sampled.",
     )
 
@@ -70,32 +70,20 @@ def parse_args(input_args=None):
     return args
 
 # create conversation for unimodal and multimodal prompts
-def create_conversation(audio):
+def create_message(audio, question):
+    prompt = "Select the best answer to the following multiple-choice question based on the audio. "
+    prompt2 = "Answer with the option\'s letter from the given choices directly and only give the best option. The best answer is: "
     # load audio modalities
     conversation = [
         {
             "role": "user",
             "content": [
                 {"type": "audio", "audio": audio},
-                {"type": "text", "text": "Where is the sound coming from?"},
+                {"type": "text", "text": prompt + question + "\n" + prompt2},
             ],
         }
     ]
         
-    return conversation
-
-def create_message(audio, question):
-    prompt = "Answer the question by choosing the best option. Do NOT output any explanation."
-    # load audio modalities
-    conversation = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "audio", "audio": audio},
-                {"type": "text", "text": prompt + "\n" + question + "\n" + "Answer:"},
-            ],
-        }
-    ]
     return conversation
 
 def get_audio_from_video(zip_path, video_path, sampling_rate=16000):
@@ -126,12 +114,9 @@ def get_audio_from_video(zip_path, video_path, sampling_rate=16000):
     return audio
 
 
-def inference(audio, args, question=None):
+def inference(audio, prompt):
     # create the conversation
-    if args.typ == "gen":
-        conversations = create_conversation(audio)
-    else:
-        conversations = create_message(audio, question)
+    conversations = create_message(audio, prompt)
 
     # process the text
     text = processor.apply_chat_template(conversations, add_generation_prompt=True, tokenize=False)
@@ -147,17 +132,18 @@ def inference(audio, args, question=None):
         
         response = processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
 
-    return response
+    return response[0]
 
 if __name__ == "__main__":
     args = parse_args()
     model_path = args.pretrained_lmm_name
 
     zip_path = os.path.join(args.data_dir, "music-avqa-synthetic.zip")
-    f = open(os.path.join(args.data_dir, "audio_results.json"), "w")
+
+    f = open(os.path.join(args.data_dir, "coml_qwen2audio_answers.json"), "w")
     
     # load dataset
-    precomputed_dataset = video_questions_dataloader(args.data_dir)
+    precomputed_dataset = video_questions_dataloader(args.data_dir, args.answer_typ)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -173,25 +159,10 @@ if __name__ == "__main__":
     # do inference per sample
     final_answers = []
     for idx, batch in enumerate(tqdm(train_dataloader, total=len(train_dataloader))):
-        if idx >= 200:
-            break
-        
         video_path = batch["video"]
         audio = get_audio_from_video(zip_path, video_path, processor.feature_extractor.sampling_rate)
 
-        response = inference(audio, args, batch["question"][0])
+        response = inference(audio, batch["prompt"][0])
         final_answers.append(response)
 
     json.dump(final_answers, f, indent=2)
-
-
-
-    
-
-
-
-
-
-
-
-

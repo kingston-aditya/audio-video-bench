@@ -12,9 +12,8 @@ import re
 import json
 import sys
 sys.path.insert(1, "/nfshomes/asarkar6/aditya/audio-video-bench/")
-from data_curate.load_music_vqa import music_vqa_dataloader
+from data_curate.make_supl.load_supplement import video_questions_dataloader
 
-import logging
 import argparse
 from tqdm import tqdm
 
@@ -58,9 +57,9 @@ def parse_args(input_args=None):
     )
 
     parser.add_argument(
-        "--typ",
+        "--answer_typ",
         type=str,
-        default="gen",
+        default="abcd",
         help="Number of frames to be sampled.",
     )
 
@@ -72,44 +71,21 @@ def parse_args(input_args=None):
     return args
 
 # create conversation for unimodal and multimodal prompts
-def create_conversation(path):
-    prompt1 = "Given a video, you need to first understand it and output a question, its answer and THREE additional confusing options in JSON format."
-    prompt2 = "Your output must meet the following three requirements: \n 1. Question must NOT be related to the musical instrument. \n 2. It must be grammatically correct. \n. Output must be in JSON format."
-    prompt3 = "An example is provided below. \n Example: {\"Question\": \"What is the color of the dress worn by lady?\", \"Answer\": \"red\". , \"Options\" : \"[black, green, yellow]\".}"
+def create_conversation(path, question):
     # load all modalities
+    prompt = "Select the best answer to the following multiple-choice question based on the video. "
+    prompt2 = "Answer with the option\'s letter from the given choices directly and only give the best option. The best answer is: "
     conversation = [
-        {
-            "role": "user",
-            "content": [
-                {
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": [{
                     "type": "video",
                     "video": path,
                     "max_pixels": 360 * 420,
                     "max_frames": 32,
                 },
-                {"type": "text", "text": prompt1 + "\n" +  prompt2 + "\n" + prompt3},
-            ],
-        }
-    ]
-        
-    return conversation
-
-def create_message(path, question):
-    # load all modalities
-    conversation = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "video",
-                    "video": path,
-                    "max_pixels": 360 * 420,
-                    "max_frames": 32,
-                },
-                {"type": "text", "text": question + "Answer:"},
-            ],
-        }
-    ]
+                {"type": "text", "text": prompt + question + "\n" + prompt2},
+                ]
+            }]
         
     return conversation
 
@@ -126,46 +102,10 @@ def process_videos(zip_path, video_path, num_frames=32):
     sampled_frames = [Image.fromarray(vr[i].asnumpy()[...,::-1]).resize((224, 224), Image.BILINEAR) for i in frame_indices]
     return sampled_frames
 
-def quote_values(match):
-    val = match.group(0)
-    val = val.strip()
-    # If already quoted, number, or starts with [, leave it
-    if val.startswith('"') or val.startswith('[') or re.match(r'^[\d.]+$', val):
-        return val
-    # Otherwise, add quotes
-    return f'"{val}"'
 
-def arrange_data(js):
-    js = "{" + "".join(js.split("{")[-1].split("}")[0]).strip()+"}"
-    s_fixed_keys = re.sub(r'(\b\w+\b)\s*:', r'"\1":', js)
-    s_fixed_values = re.sub(r'(?<=: )[^,\]\}]+', quote_values, s_fixed_keys)
-    s_fixed_values = re.sub(r'\[([^\]]+)\]', lambda m: '[' + ','.join(f'"{x.strip()}"' for x in m.group(1).split(',')) + ']', s_fixed_values)
-
-    js = js.replace("\n", "")
-    js = json.loads(js)
-
-    question = js['Question']
-    answer = [js['Answer']]
-    options = js['Options'] if isinstance(js['Options'], list) is True else [js["Options"][0]]
-
-    # shuffle the options
-    options = options+answer
-    np.random.shuffle(options)
-    options = [chr(65+idx)+". "+item.strip() for idx, item in enumerate(options)]
-
-    answer_number = chr(65+next((i for i, s in enumerate(options) if answer[0] in s), None))
-
-    # make proper question
-    final_part = {"question": question + "\n" + "Options:\n" + "\n".join(options+["E. None of the above."]), "answer": answer_number}
-
-    return final_part
-
-def inference(video, args, question=None):
+def inference(video, prompt):
     # create the conversation
-    if args.typ == "gen":
-        conversations = create_conversation(video)
-    else:
-        conversations = create_message(video, question)
+    conversations = create_conversation(video, prompt)
 
     # do the inference
     text = processor.apply_chat_template(conversations, add_generation_prompt=True, tokenize=False)
@@ -191,10 +131,11 @@ if __name__ == "__main__":
     model_path = args.pretrained_lmm_name
 
     zip_path = os.path.join(args.data_dir, "music-avqa-synthetic.zip")
-    f = open(os.path.join(args.data_dir, "video_questions.json"), "w")
+
+    f = open(os.path.join(args.data_dir, "supl_qwen2p5vl_answers.json"), "w")
     
     # load dataset
-    precomputed_dataset = music_vqa_dataloader(args.data_dir)
+    precomputed_dataset = video_questions_dataloader(args.data_dir, args.answer_typ)
     train_dataloader = torch.utils.data.DataLoader(
         precomputed_dataset,
         shuffle=False,
@@ -210,15 +151,11 @@ if __name__ == "__main__":
     # do inference per sample
     final_answers = []
     for idx, batch in enumerate(tqdm(train_dataloader, total=len(train_dataloader))):
-        # break code after 200 iterations
-        if idx >= 200:
-            break
-
         video_path = batch["video"]
         video = process_videos(zip_path, video_path)
 
-        response = inference(video, args)
+        response = inference(video, batch["prompt"][0])
 
-        final_answers.append(arrange_data(response))
+        final_answers.append(response)
 
     json.dump(final_answers, f, indent=2)

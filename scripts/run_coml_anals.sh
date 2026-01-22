@@ -1,13 +1,14 @@
 export CACHE_DIR="/nfshomes/asarkar6/trinity/model_weights/"
 export DATA_DIR="/nfshomes/asarkar6/trinity/music-vqa/"
 
-cd /nfshomes/asarkar6/aditya/audio-video-bench/pipelines/
+cd /nfshomes/asarkar6/aditya/audio-video-bench/analysis/
 
 python run_qwenomni.py \
     --pretrained_lmm_name="Qwen/Qwen2.5-Omni-7B" \
-    --model_name="qwen7b" \
     --answer_typ="9qj4" \
     --dataset_typ="coml" \
+    --get_logits="vocabproj" \
+    --correctness="T" \
     --data_dir=$DATA_DIR \
     --cache_dir=$CACHE_DIR \
     --batch_size=1 \
